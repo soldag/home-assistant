@@ -137,9 +137,9 @@ class FluxLight(Light):
         if rgb:
             self._bulb.setRgb(*tuple(rgb))
         elif brightness:
-            if self._mode = 'rgbw':
+            if self._mode == 'rgbw':
                 self._bulb.setWarmWhite255(brightness)
-            elif self._mode = 'rgb':
+            elif self._mode == 'rgb':
                 (red, green, blue) = self._bulb.getRgb()
                 self._bulb.setRgb(red, green, blue, brightness=brightness)
         elif effect == EFFECT_RANDOM:
