@@ -23,6 +23,7 @@ REQUIREMENTS = ['https://github.com/Danielhiversen/flux_led/archive/0.8.zip'
 _LOGGER = logging.getLogger(__name__)
 
 CONF_AUTOMATIC_ADD = 'automatic_add'
+CONF_RGBW = 'rgbw'
 
 DOMAIN = 'flux_led'
 
@@ -36,6 +37,7 @@ DEVICE_SCHEMA = vol.Schema({
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
     vol.Optional(CONF_DEVICES, default={}): {cv.string: DEVICE_SCHEMA},
     vol.Optional(CONF_AUTOMATIC_ADD, default=False):  cv.boolean,
+    vol.Optional("rgbw", default=True):  cv.boolean,
 })
 
 
@@ -48,6 +50,7 @@ def setup_platform(hass, config, add_devices, discovery_info=None):
         device = {}
         device['name'] = device_config[CONF_NAME]
         device['ipaddr'] = ipaddr
+        device['rgbw'] = device_config[CONF_RGBW]
         light = FluxLight(device)
         if light.is_valid:
             lights.append(light)
@@ -65,6 +68,7 @@ def setup_platform(hass, config, add_devices, discovery_info=None):
         if ipaddr in light_ips:
             continue
         device['name'] = device['id'] + " " + ipaddr
+        device['rgbw'] = True
         light = FluxLight(device)
         if light.is_valid:
             lights.append(light)
@@ -82,6 +86,7 @@ class FluxLight(Light):
 
         self._name = device['name']
         self._ipaddr = device['ipaddr']
+        self._rgbw = device['rgbw']
         self.is_valid = True
         self._bulb = None
         try:
@@ -132,7 +137,11 @@ class FluxLight(Light):
         if rgb:
             self._bulb.setRgb(*tuple(rgb))
         elif brightness:
-            self._bulb.setWarmWhite255(brightness)
+            if self._rgbw:
+                self._bulb.setWarmWhite255(brightness)
+            else:
+                (red, green, blue) = self._bulb.getRgb()
+                self._bulb.setRgbw(red, green, blue, brightness)
         elif effect == EFFECT_RANDOM:
             self._bulb.setRgb(random.randrange(0, 255),
                               random.randrange(0, 255),
