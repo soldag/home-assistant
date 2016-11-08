@@ -23,7 +23,7 @@ REQUIREMENTS = ['https://github.com/Danielhiversen/flux_led/archive/0.8.zip'
 _LOGGER = logging.getLogger(__name__)
 
 CONF_AUTOMATIC_ADD = 'automatic_add'
-CONF_RGBW = 'rgbw'
+ATTR_MODE = 'mode'
 
 DOMAIN = 'flux_led'
 
@@ -37,7 +37,7 @@ DEVICE_SCHEMA = vol.Schema({
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
     vol.Optional(CONF_DEVICES, default={}): {cv.string: DEVICE_SCHEMA},
     vol.Optional(CONF_AUTOMATIC_ADD, default=False):  cv.boolean,
-    vol.Optional("rgbw", default=True):  cv.boolean,
+    vol.Optional(ATTR_MODE, default='rgbw'):  cv.string,
 })
 
 
@@ -50,7 +50,7 @@ def setup_platform(hass, config, add_devices, discovery_info=None):
         device = {}
         device['name'] = device_config[CONF_NAME]
         device['ipaddr'] = ipaddr
-        device['rgbw'] = device_config[CONF_RGBW]
+        device[ATTR_MODE] = device_config[ATTR_MODE]
         light = FluxLight(device)
         if light.is_valid:
             lights.append(light)
@@ -68,7 +68,7 @@ def setup_platform(hass, config, add_devices, discovery_info=None):
         if ipaddr in light_ips:
             continue
         device['name'] = device['id'] + " " + ipaddr
-        device['rgbw'] = True
+        device[ATTR_MODE] = 'rgbw'
         light = FluxLight(device)
         if light.is_valid:
             lights.append(light)
@@ -86,7 +86,7 @@ class FluxLight(Light):
 
         self._name = device['name']
         self._ipaddr = device['ipaddr']
-        self._rgbw = device['rgbw']
+        self._mode = device[ATTR_MODE]
         self.is_valid = True
         self._bulb = None
         try:
@@ -137,9 +137,9 @@ class FluxLight(Light):
         if rgb:
             self._bulb.setRgb(*tuple(rgb))
         elif brightness:
-            if self._rgbw:
+            if self._mode = 'rgbw':
                 self._bulb.setWarmWhite255(brightness)
-            else:
+            elif self._mode = 'rgb':
                 (red, green, blue) = self._bulb.getRgb()
                 self._bulb.setRgb(red, green, blue, brightness=brightness)
         elif effect == EFFECT_RANDOM:
