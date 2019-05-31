@@ -15,10 +15,10 @@ from homeassistant.components.media_player.const import (
     SUPPORT_SEEK, SUPPORT_STOP, SUPPORT_TURN_OFF, SUPPORT_TURN_ON,
     SUPPORT_VOLUME_MUTE, SUPPORT_VOLUME_SET)
 from homeassistant.const import (
-    CONF_HOST, EVENT_HOMEASSISTANT_STOP, STATE_IDLE, STATE_OFF, STATE_PAUSED,
-    STATE_PLAYING)
+    CONF_HOST, CONF_USERNAME, CONF_PASSWORD, EVENT_HOMEASSISTANT_STOP, 
+    STATE_IDLE, STATE_OFF, STATE_PAUSED, STATE_PLAYING)
 from homeassistant.core import callback
-from homeassistant.exceptions import PlatformNotReady
+from homeassistant.exceptions import PlatformNotReady, HomeAssistantError
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.dispatcher import (
     async_dispatcher_connect, dispatcher_send)
@@ -33,6 +33,9 @@ DEPENDENCIES = ('cast',)
 _LOGGER = logging.getLogger(__name__)
 
 CONF_IGNORE_CEC = 'ignore_cec'
+CONF_SPOTIFY = 'spotify'
+CONF_SPOTIFY_ACCOUNTS = 'accounts'
+
 CAST_SPLASH = 'https://home-assistant.io/images/cast/splash.png'
 
 DEFAULT_PORT = 8009
@@ -60,10 +63,19 @@ SIGNAL_CAST_DISCOVERED = 'cast_discovered'
 # removed
 SIGNAL_CAST_REMOVED = 'cast_removed'
 
+SPOTIFY_ACCOUNT_SCHEMA = vol.Schema({
+    vol.Required(CONF_USERNAME): cv.string,
+    vol.Required(CONF_PASSWORD): cv.string,
+})
+
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
     vol.Optional(CONF_HOST): cv.string,
     vol.Optional(CONF_IGNORE_CEC, default=[]):
         vol.All(cv.ensure_list, [cv.string]),
+    vol.Optional(CONF_SPOTIFY): vol.Schema({
+        vol.Required(CONF_SPOTIFY_ACCOUNTS): 
+            cv.schema_with_slug_keys(SPOTIFY_ACCOUNT_SCHEMA),
+    }),
 })
 
 
@@ -252,16 +264,18 @@ def _setup_internal_discovery(hass: HomeAssistantType) -> None:
 
 @callback
 def _async_create_cast_device(hass: HomeAssistantType,
+                              config: ConfigType,
                               info: ChromecastInfo):
     """Create a CastDevice Entity from the chromecast object.
 
     Returns None if the cast device has already been added.
     """
     _LOGGER.debug("_async_create_cast_device: %s", info)
+    spotify_accounts = config.get('spotify', {}).get('accounts')
     if info.uuid is None:
         # Found a cast without UUID, we don't store it because we won't be able
         # to update it anyway.
-        return CastDevice(info)
+        return CastDevice(info, spotify_accounts)
 
     # Found a cast with UUID
     if info.is_dynamic_group:
@@ -275,7 +289,7 @@ def _async_create_cast_device(hass: HomeAssistantType,
         return None
     # -> New cast device
     added_casts.add(info.uuid)
-    return CastDevice(info)
+    return CastDevice(info, spotify_accounts)
 
 
 async def async_setup_platform(hass: HomeAssistantType, config: ConfigType,
@@ -333,7 +347,7 @@ async def _async_setup_platform(hass: HomeAssistantType, config: ConfigType,
             # Not our requested cast device.
             return
 
-        cast_device = _async_create_cast_device(hass, discover)
+        cast_device = _async_create_cast_device(hass, config, discover)
         if cast_device is not None:
             async_add_entities([cast_device])
 
@@ -484,10 +498,11 @@ class CastDevice(MediaPlayerDevice):
     "elected leader" itself.
     """
 
-    def __init__(self, cast_info):
+    def __init__(self, cast_info, spotify_accounts=None):
         """Initialize the cast device."""
         import pychromecast  # noqa: pylint: disable=unused-import
         self._cast_info = cast_info  # type: ChromecastInfo
+        self._spotify_accounts = spotify_accounts
         self.services = None
         if cast_info.service:
             self.services = set()
@@ -927,7 +942,40 @@ class CastDevice(MediaPlayerDevice):
     def play_media(self, media_type, media_id, **kwargs):
         """Play media from a URL."""
         # We do not want this to be forwarded to a group / dynamic group
-        self._chromecast.media_controller.play_media(media_id, media_type)
+        if media_id.startswith('spotify'):
+            self.play_media_spotify(media_type, media_id, **kwargs)
+        else:
+            self._chromecast.media_controller.play_media(media_id, media_type)
+
+    def play_media_spotify(self, media_type, media_id, **kwargs):
+        import time
+        import spotipy
+        import spotify_token
+        from pychromecast.controllers.spotify import SpotifyController
+
+        accounts = self._spotify_accounts
+        if not accounts:
+            raise HomeAssistantError('No spotify account configured')
+        account_name = kwargs.get('account', accounts.keys()[0])
+        if account_name not in accounts:
+            raise HomeAssistantError('Unknown spotify account')
+        username = accounts[account_name][CONF_USERNAME]
+        password = accounts[account_name][CONF_USERNAME]
+
+        access_token, expires = spotify_token.start_session(username, password)
+        expires = expires - int(time.time())
+        client = spotipy.Spotify(auth=access_token)
+
+        spotify_controller = SpotifyController(access_token, expires)
+        self._chromecast.register_handler(spotify_controller)
+        spotify_controller.launch_app()
+
+        if client.current_playback() is not None:
+            client.transfer_playback(device_id=self._chromecast.device, force_play=True)
+        elif media_id.find('track') > 0:
+            client.start_playback(device_id=self._chromecast.device, uris=[media_id])
+        else:
+            client.start_playback(device_id=self._chromecast.device, context_uri=media_id)
 
     # ========== Properties ==========
     @property
